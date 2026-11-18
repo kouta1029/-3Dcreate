@@ -253,6 +253,7 @@ def build_a7(scene, track):
     setup(scene, 96)
     upper_x, rise = track.upper
     edge = upper_x - .40
+    scene['Upper landing edge X'] = edge
     tip = edge - .105
     hinge = edge + .140
     deck = rise + AXLE_OFFSET + .118

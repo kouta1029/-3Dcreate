@@ -29,6 +29,43 @@ def cull_offscreen(objects, camera_projection):
                            or all(p.z < -p.w for p in points))
 
 
+def prepare_tread_materials(objects):
+    opaque_materials = {}
+    for name in ('Tread | cast aluminum', 'Yellow demarcation'):
+        masked = bpy.data.materials[name]
+        opaque = masked.copy()
+        tree = opaque.node_tree
+        surface = tree.nodes['Principled BSDF'].outputs[0]
+        tree.links.new(surface, tree.nodes['Material Output'].inputs['Surface'])
+        opaque.surface_render_method = 'DITHERED'
+        opaque_materials[masked] = opaque
+
+    treads = []
+    for obj, corners in objects:
+        slots = []
+        for slot in obj.material_slots:
+            masked = slot.material
+            if masked in opaque_materials:
+                slot.link = 'OBJECT'
+                slots.append((slot, masked, opaque_materials[masked]))
+        if slots:
+            treads.append((obj, corners, slots))
+    return treads
+
+
+def update_tread_materials(treads, upper_edge):
+    # Only steps reaching under the plate need the transparent material.
+    for obj, corners, slots in treads:
+        if obj.hide_render:
+            continue
+        world_x = obj.matrix_world[0]
+        under_plate = any(world_x.dot(corner) > upper_edge - 1e-6 for corner in corners)
+        for slot, masked, opaque in slots:
+            material = masked if under_plate else opaque
+            if slot.material != material:
+                slot.material = material
+
+
 def main():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)
@@ -52,6 +89,8 @@ def main():
     mechanism = bpy.data.collections['M2  踏段・前輪・後輪・踏段チェーン']
     objects = [(obj, [Vector((*corner, 1)) for corner in obj.bound_box])
                for obj in mechanism.objects if not obj.hide_render]
+    upper_edge = scene.get('Upper landing edge X')
+    treads = prepare_tread_materials(objects) if upper_edge is not None else []
     start = perf_counter()
     with (directory / 'frame_times.csv').open('w', newline='') as log:
         writer = csv.writer(log)
@@ -59,6 +98,7 @@ def main():
         for frame in selected:
             scene.frame_set(frame)
             cull_offscreen(objects, camera_projection)
+            update_tread_materials(treads, upper_edge)
             scene.render.filepath = str(directory / f'frame_{frame:04d}.png')
             frame_start = perf_counter()
             bpy.ops.render.render(write_still=True)
