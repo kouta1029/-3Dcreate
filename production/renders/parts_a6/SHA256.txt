@@ -1,0 +1,2 @@
+e0eabb5003627d93452e6859a3e296fd9d031516ec65e567742c5bfaccbb4496  production/renders/a6_handrail.mp4
+# Size: 1553020 bytes
