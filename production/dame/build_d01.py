@@ -9,7 +9,6 @@ from mathutils import Quaternion, Vector, noise
 
 ROOT = Path(__file__).resolve().parent
 HOT_EDGE_STRENGTH = 27.0
-bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
 def collection(name, parent=None):
@@ -451,6 +450,96 @@ def potato_radius(u):
     return .0298 * max(0, 1 - u*u)**.69 * (1 + .13*u + .045*sin(6*u + .7))
 
 
+def wrapped_potato(u, t, lift=0, smooth=False):
+    y0, z0 = .004*sin(2.4*u), .032 + .003*u + .001*cos(4*u)
+    cap = min(1.0, max(0, (abs(u)-.80)/.20))
+    edible = potato_radius(max(-1, min(1, 1.08*u)))
+    r = edible + .0040 + .0069*cap*cap
+    curl = t + 1.40*cap*cap*(1 if u < 0 else -1)
+    broad = .0015 * sin(4*curl + 5*u) + .0010 * cos(7*curl - 11*u)
+    crease = .00135 * (1 - abs(sin(11*curl + 19*u + 1.2*sin(8*u-2*t))))
+    wrinkle = .0010 * cos(21*t - 35*u) * sin(14*u+sin(6*t))
+    fine = .00058 * noise.noise_vector((u*33, cos(t)*9, sin(t)*9))[0]
+    if smooth:
+        r += .24*broad * (1-.40*cap)
+    else:
+        r += (broad + crease + wrinkle + fine) * (1-.40*cap)
+    r += cap*.0037*cos(6*curl + (2 if u < 0 else 0))
+    r = max(.001, r + lift)
+    x = .086*u + cap**4*(.0020*sin(5*curl)+.0014*cos(9*curl))
+    # The underside has a short flat footprint where the parcel rests.
+    return x, y0+r*cos(curl), max(-.0007, z0+.94*r*sin(curl))
+
+
+def tucked_foil_end(side, a, b, smooth=False):
+    # The twisted foil folds back over the potato tip inside each open lip.
+    angle = -side*tau*b
+    outer = wrapped_potato(side, angle, smooth=smooth)
+    center = (side*.0815, .004*sin(2.4*side), .032+.003*side+.001*cos(4*side))
+    radius = 1.003*a
+    x, y, z = (inner + radius*(edge-inner) for inner, edge in zip(center, outer))
+    folds = sin(pi*a) * (.0011*cos(6*angle) + .00065*cos(11*angle+side))
+    glints = max(0, cos(6*angle+side))**6
+    return (x + side*folds, y, z), .30*a**7*glints
+
+
+def smooth_foil_panel(model, source, rows, cols, smooth_surface, mat):
+    """Preserve the wrapped outline while deriving reflections from a smoother surface."""
+    panel = foil_grid(source.name + " | smooth", model, rows, cols,
+                      smooth_surface, mat, .00013, closed=True)
+    mesh = panel.data
+    sharp_edges = mesh.attributes.get("sharp_edge")
+    if sharp_edges:
+        mesh.attributes.remove(sharp_edges)
+    normals = [vertex.normal.copy() for vertex in mesh.vertices]
+    mesh.vertices.foreach_set("co", [component for vertex in source.data.vertices for component in vertex.co])
+    mesh.update()
+    mesh.normals_split_custom_set_from_vertices(normals)
+    return panel
+
+
+def smooth_foil_seam(panel, cols, mat):
+    """Lay a narrow fold and an adjacent overlap edge across the same foil sheet."""
+    mesh = panel.data
+    uv = mesh.uv_layers.new(name="Fold across foil")
+    rows = len(mesh.vertices)//cols-1
+    values = []
+    for face in mesh.polygons:
+        indices = [divmod(mesh.loops[i].vertex_index, cols) for i in face.loop_indices]
+        crosses_wrap = any(column == cols-1 for _, column in indices)
+        for row, column in indices:
+            u = 2*row/rows-1
+            angle = tau*(cols if crosses_wrap and column == 0 else column)/cols
+            center = 2.12 + .21*sin(2.8*u + .2) + .13*u
+            values.extend((.5 + .45*(angle-center), 0))
+    uv.uv.foreach_set("vector", values)
+
+    tree = mat.node_tree
+    shader = tree.nodes.get("Principled BSDF")
+    coords = tree.nodes.new("ShaderNodeUVMap")
+    coords.uv_map = uv.name
+    height = tree.nodes.new("ShaderNodeValToRGB")
+    height.label = "Laid-down overlap and crease"
+    height.color_ramp.interpolation = "EASE"
+    # U stores the signed distance across the fold in angular coordinates.
+    split = tree.nodes.new("ShaderNodeSeparateXYZ")
+    tree.links.new(coords.outputs["UV"], split.inputs["Vector"])
+    tree.links.new(split.outputs["X"], height.inputs["Fac"])
+    height.color_ramp.elements[-1].color = (0, 0, 0, 1)
+    for pos, level in ((.477, 0), (.494, 1), (.505, .13), (.533, .13), (.554, 0)):
+        height.color_ramp.elements.new(pos).color = (level, level, level, 1)
+    bump = tree.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = .75
+    bump.inputs["Distance"].default_value = .00042
+    tree.links.new(height.outputs["Color"], bump.inputs["Height"])
+    tree.links.new(bump.outputs["Normal"], shader.inputs["Normal"])
+    tint = tree.nodes.new("ShaderNodeMixRGB")
+    tint.inputs[1].default_value = shader.inputs["Base Color"].default_value
+    tint.inputs[2].default_value = (.38, .42, .46, 1)
+    tree.links.new(height.outputs["Color"], tint.inputs[0])
+    tree.links.new(tint.outputs["Color"], shader.inputs["Base Color"])
+
+
 def sweet_potato():
     model = collection("M2_foil_wrapped_sweet_potato")
     normal = collection("M2 | unheated wrap", model)
@@ -481,23 +570,6 @@ def sweet_potato():
         points = [tuber(a + delta, b + .12*delta)[0] for delta in (-.008, -.003, .003, .008)]
         tube(f"Sweet potato | root trace {index+1}", normal, points, .00032, skin)
 
-    def wrapped(u, t, lift=0):
-        y0, z0 = .004*sin(2.4*u), .032 + .003*u + .001*cos(4*u)
-        cap = min(1.0, max(0, (abs(u)-.80)/.20))
-        edible = potato_radius(max(-1, min(1, 1.08*u)))
-        r = edible + .0040 + .0069*cap*cap
-        curl = t + 1.40*cap*cap*(1 if u < 0 else -1)
-        broad = .0015 * sin(4*curl + 5*u) + .0010 * cos(7*curl - 11*u)
-        crease = .00135 * (1 - abs(sin(11*curl + 19*u + 1.2*sin(8*u-2*t))))
-        wrinkle = .0010 * cos(21*t - 35*u) * sin(14*u+sin(6*t))
-        fine = .00058 * noise.noise_vector((u*33, cos(t)*9, sin(t)*9))[0]
-        r += (broad + crease + wrinkle + fine) * (1-.40*cap)
-        r += cap*.0037*cos(6*curl + (2 if u < 0 else 0))
-        r = max(.001, r + lift)
-        x = .086*u + cap**4*(.0020*sin(5*curl)+.0014*cos(9*curl))
-        # The underside has a short flat footprint where the parcel rests.
-        return x, y0+r*cos(curl), max(-.0007, z0+.94*r*sin(curl))
-
     def wrap_surface(a, b):
         u, t = 2*a - 1, tau*b
         w = max(0, (abs(u)-.932)/.068)
@@ -506,25 +578,14 @@ def sweet_potato():
         patch = exp(-((t-2.04)/.34)**2) * (
             exp(-((u-.49)/.13)**2) + .68*exp(-((u+.32)/.18)**2)
         )
-        return wrapped(u, t), .74*w*w*flecks + .59*crest*crest*patch
+        return wrapped_potato(u, t), .74*w*w*flecks + .59*crest*crest*patch
 
     shell = foil_grid("Foil wrap | pinched and twisted ends", normal,
                       136, 112, wrap_surface, cold_foil, .00013, closed=True)
 
-    def tucked_end(side, a, b):
-        # The twisted foil folds back over the potato tip inside each open lip.
-        angle = -side*tau*b
-        outer = wrapped(side, angle)
-        center = (side*.0815, .004*sin(2.4*side), .032+.003*side+.001*cos(4*side))
-        radius = 1.003*a
-        x, y, z = (inner + radius*(edge-inner) for inner, edge in zip(center, outer))
-        folds = sin(pi*a) * (.0011*cos(6*angle) + .00065*cos(11*angle+side))
-        glints = max(0, cos(6*angle+side))**6
-        return (x + side*folds, y, z), .30*a**7*glints
-
     folded_ends = [
         foil_grid(f"Foil wrap | tucked {label} end", normal, 15, 112,
-                  lambda a, b, side=side: tucked_end(side, a, b),
+                  lambda a, b, side=side: tucked_foil_end(side, a, b),
                   cold_foil, .00013, closed=True)
         for label, side in [("left", -1), ("right", 1)]
     ]
@@ -538,7 +599,7 @@ def sweet_potato():
         gleam = .46 + .54*max(0, cos(u*9.2-.7)+.25*sin(u*28))**2
         edge = max(0, (b-.48)/.52)**1.12
         heat = edge * min(1.0, gleam) * (.86+.14*sin(u*52))
-        return wrapped(u, t, rise), heat
+        return wrapped_potato(u, t, rise), heat
 
     seam = foil_grid("Foil wrap | overlapping crimped seam", normal,
                      122, 12, overlap, cold_foil, .00013)
@@ -552,6 +613,29 @@ def sweet_potato():
     model["food_mm"] = "150 × approximately 60"
     model["variant"] = "Switch between the unheated and red-hot subcollections"
     return model, normal, hot
+
+
+def smooth_foil(normal):
+    smooth = collection("M4_smooth_foil_food")
+    smooth["finish"] = "M2 parcel outline with smooth aluminum and a closed foil overlap"
+    for source in normal.objects:
+        if source.name.startswith("Sweet potato |"):
+            duplicate = source.copy()
+            duplicate.location -= normal.instance_offset
+            smooth.objects.link(duplicate)
+    flat_aluminum = foil_material("M4 smooth aluminum", (.26, .30), wrinkled=False)
+    folded_aluminum = flat_aluminum.copy()
+    folded_aluminum.name = "M4 smooth aluminum | laid-down overlap"
+    shell = normal.objects["Foil wrap | pinched and twisted ends"]
+    flat_shell = smooth_foil_panel(
+        smooth, shell, 136, 112,
+        lambda a, b: (wrapped_potato(2*a-1, tau*b, smooth=True), 0), folded_aluminum)
+    smooth_foil_seam(flat_shell, 112, folded_aluminum)
+    for label, side in (("left", -1), ("right", 1)):
+        source = normal.objects[f"Foil wrap | tucked {label} end"]
+        smooth_foil_panel(smooth, source, 15, 112,
+                          lambda a, b: tucked_foil_end(side, a, b, smooth=True), flat_aluminum)
+    return smooth
 
 
 def crumpled_foil():
@@ -600,31 +684,6 @@ def crumpled_foil():
     foil_grid("Folded sheet | continuous creases and pointed lip", model,
               156, 183, sheet, mat, .00017)
     model["macro_tip"] = "Raised fold is exaggerated for legibility"
-    return model
-
-
-def smooth_foil():
-    model = collection("M4_smooth_foil_food")
-    food, shader = material("Food | pale baked skin", (.32, .158, .078), 0, .58)
-    grain(food, shader, 790, .00016)
-    mat = foil_material("M4 smooth aluminum", (.21, .235), wrinkled=False)
-
-    def dome(a, b, shell):
-        angle = a * (2.17 if shell else pi)
-        t = -tau*b
-        radius = sin(angle)
-        shape = 1+.030*cos(3*t)+.016*cos(5*t+2*angle)
-        x = (.074 if shell else .0736)*radius*cos(t)*shape
-        y = (.049 if shell else .0486)*radius*sin(t)*shape
-        z = .031 + (.033 if shell else .0326)*cos(angle)
-        return (x, y+.0017*sin(2*angle), z), 0
-
-    lump = foil_grid("Rounded food beneath close-fitting foil", model,
-                     62, 100, lambda a, b: dome(a, b, False), food, 0, closed=True)
-    lump.modifiers.clear()
-    foil_grid("Smooth sheet | flush folded edge", model, 57, 100,
-              lambda a, b: dome(a, b, True), mat, .00010, closed=True)
-    model["finish"] = "Tight to the food with no raised corners"
     return model
 
 
@@ -782,7 +841,7 @@ def copy_assembly(source_objects, destination):
 
 
 def animate_glass_contact(dish):
-    """Put a soft rotating contact shadow directly in the transparent dish surface."""
+    """Darken the seated footprint and feather the shadow into the glass."""
     slot = dish.material_slots[0]
     mat = slot.material.copy()
     mat.name = "Turntable glass | rotating contact shadow"
@@ -794,31 +853,62 @@ def animate_glass_contact(dish):
     coord = tree.nodes.new("ShaderNodeTexCoord")
     offset = tree.nodes.new("ShaderNodeVectorMath")
     offset.operation = "SUBTRACT"
-    offset.inputs[1].default_value = (.005, -.010, 0)
+    offset.inputs[1].default_value = (.0085, .003, 0)
     tree.links.new(coord.outputs["Object"], offset.inputs[0])
     size = tree.nodes.new("ShaderNodeVectorMath")
     size.operation = "MULTIPLY"
-    size.inputs[1].default_value = (1/.068, 1/.052, 0)
+    size.inputs[1].default_value = (1/.039, 1/.031, 0)
     tree.links.new(offset.outputs["Vector"], size.inputs[0])
     radius = tree.nodes.new("ShaderNodeVectorMath")
     radius.operation = "LENGTH"
     tree.links.new(size.outputs["Vector"], radius.inputs[0])
     mask = tree.nodes.new("ShaderNodeMapRange")
     mask.interpolation_type = "SMOOTHERSTEP"
-    mask.inputs["From Min"].default_value = .12
-    mask.inputs["To Min"].default_value = .78
+    mask.inputs["From Min"].default_value = .54
+    mask.inputs["To Min"].default_value = .96
     mask.inputs["To Max"].default_value = 0
     tree.links.new(radius.outputs["Value"], mask.inputs["Value"])
+    feather = tree.nodes.new("ShaderNodeMapRange")
+    feather.interpolation_type = "SMOOTHERSTEP"
+    feather.inputs["From Min"].default_value = .76
+    feather.inputs["From Max"].default_value = 1.45
+    feather.inputs["To Min"].default_value = .11
+    feather.inputs["To Max"].default_value = 0
+    tree.links.new(radius.outputs["Value"], feather.inputs["Value"])
+    shade = tree.nodes.new("ShaderNodeMath")
+    shade.operation = "MAXIMUM"
+    tree.links.new(mask.outputs["Result"], shade.inputs[0])
+    tree.links.new(feather.outputs["Result"], shade.inputs[1])
     alpha = tree.nodes.new("ShaderNodeMath")
     alpha.operation = "MAXIMUM"
     tree.links.new(glass_alpha, alpha.inputs[0])
-    tree.links.new(mask.outputs["Result"], alpha.inputs[1])
+    tree.links.new(shade.outputs[0], alpha.inputs[1])
     tree.links.new(alpha.outputs[0], shader.inputs["Alpha"])
     tint = tree.nodes.new("ShaderNodeMixRGB")
     tint.inputs[1].default_value = shader.inputs["Base Color"].default_value
     tint.inputs[2].default_value = (.002, .002, .002, 1)
-    tree.links.new(mask.outputs["Result"], tint.inputs[0])
+    tree.links.new(shade.outputs[0], tint.inputs[0])
     tree.links.new(tint.outputs[0], shader.inputs["Base Color"])
+    specular = tree.nodes.new("ShaderNodeMath")
+    specular.operation = "MULTIPLY_ADD"
+    specular.inputs[1].default_value = -.44
+    specular.inputs[2].default_value = .50
+    tree.links.new(shade.outputs[0], specular.inputs[0])
+    tree.links.new(specular.outputs[0], shader.inputs["Specular IOR Level"])
+
+
+def seat_v1_parcel(parcel):
+    shell = next(obj for obj in parcel.instance_collection.objects
+                 if obj.name.startswith("Foil wrap | pinched and twisted ends"))
+    drop = .00215
+    shell.data = shell.data.copy()
+    floor = min(vertex.co.z for vertex in shell.data.vertices) + drop
+    # Broaden the underside as the parcel settles onto the glass.
+    for vertex in shell.data.vertices:
+        vertex.co.z = max(vertex.co.z, floor)
+    shell.data.update()
+    parcel.location.z -= drop
+
 
 def production_hero(m1, m5, door, cut_edges, plate, ring, rig, hero_camera, hot, seat):
     scene = new_scene("V1 | Interior turntable")
@@ -850,7 +940,9 @@ def production_hero(m1, m5, door, cut_edges, plate, ring, rig, hero_camera, hot,
         parcel_group.objects.link(obj)
         if obj.type == "MESH" and obj.active_material == bpy.data.materials["M2 silver foil | red-hot edges"]:
             obj.active_material = heat_material
-    instance("M2 heating parcel", turntable, parcel_group, (0, 0, seat)).parent = pivot
+    parcel = instance("M2 heating parcel", turntable, parcel_group, (0, 0, seat))
+    parcel.parent = pivot
+    seat_v1_parcel(parcel)
     for frame, heat in ((1, 0), (49, 0), (58, 0), (73, 3.2), (96, HOT_EDGE_STRENGTH)):
         socket = heat_material.node_tree.nodes["Heat intensity"].outputs[0]
         socket.default_value = heat
@@ -977,7 +1069,7 @@ def production_foil(m3, m4, studio):
     location = (.0478, -.4168, .184)
     scenes = [macro]
     for scene_name, model, position in (
-        ("V4 | Flat foil", m4, (-.0007, -.0835, -.0068)),
+        ("V4 | Flat foil", m4, (.0027, -.0760, -.00811)),
         ("V4 | Crumpled foil", m3, (0, 0, 0)),
     ):
         scene = new_scene(scene_name)
@@ -986,7 +1078,7 @@ def production_foil(m3, m4, studio):
         subject = instance(model.name, scene.collection, model, position)
         if model == m4:
             subject.rotation_euler.z = .281
-            subject.scale = (1.264,) * 3
+            subject.scale = (1.16,) * 3
         if not comparison.objects:
             shared_view = camera(scene, comparison, "V4 | shared camera", location, target, 51)
             rolled_camera_pose(shared_view, location, target, 1.13)
@@ -1000,11 +1092,12 @@ def production_foil(m3, m4, studio):
 
 
 def main():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
     initial = bpy.context.scene
     m1, door, skin, cut_edges, side_hardware, plate, ring = microwave()
     m2, normal, hot = sweet_potato()
     m3 = crumpled_foil()
-    m4 = smooth_foil()
+    m4 = smooth_foil(normal)
     m5 = kitchen()
 
     library = new_scene("05_model_library")
