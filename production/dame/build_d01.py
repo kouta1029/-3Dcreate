@@ -841,7 +841,7 @@ def copy_assembly(source_objects, destination):
 
 
 def animate_glass_contact(dish):
-    """Put a soft rotating contact shadow directly in the transparent dish surface."""
+    """Darken the seated footprint and feather the shadow into the glass."""
     slot = dish.material_slots[0]
     mat = slot.material.copy()
     mat.name = "Turntable glass | rotating contact shadow"
@@ -853,31 +853,62 @@ def animate_glass_contact(dish):
     coord = tree.nodes.new("ShaderNodeTexCoord")
     offset = tree.nodes.new("ShaderNodeVectorMath")
     offset.operation = "SUBTRACT"
-    offset.inputs[1].default_value = (.005, -.010, 0)
+    offset.inputs[1].default_value = (.0085, .003, 0)
     tree.links.new(coord.outputs["Object"], offset.inputs[0])
     size = tree.nodes.new("ShaderNodeVectorMath")
     size.operation = "MULTIPLY"
-    size.inputs[1].default_value = (1/.068, 1/.052, 0)
+    size.inputs[1].default_value = (1/.039, 1/.031, 0)
     tree.links.new(offset.outputs["Vector"], size.inputs[0])
     radius = tree.nodes.new("ShaderNodeVectorMath")
     radius.operation = "LENGTH"
     tree.links.new(size.outputs["Vector"], radius.inputs[0])
     mask = tree.nodes.new("ShaderNodeMapRange")
     mask.interpolation_type = "SMOOTHERSTEP"
-    mask.inputs["From Min"].default_value = .12
-    mask.inputs["To Min"].default_value = .78
+    mask.inputs["From Min"].default_value = .54
+    mask.inputs["To Min"].default_value = .96
     mask.inputs["To Max"].default_value = 0
     tree.links.new(radius.outputs["Value"], mask.inputs["Value"])
+    feather = tree.nodes.new("ShaderNodeMapRange")
+    feather.interpolation_type = "SMOOTHERSTEP"
+    feather.inputs["From Min"].default_value = .76
+    feather.inputs["From Max"].default_value = 1.45
+    feather.inputs["To Min"].default_value = .11
+    feather.inputs["To Max"].default_value = 0
+    tree.links.new(radius.outputs["Value"], feather.inputs["Value"])
+    shade = tree.nodes.new("ShaderNodeMath")
+    shade.operation = "MAXIMUM"
+    tree.links.new(mask.outputs["Result"], shade.inputs[0])
+    tree.links.new(feather.outputs["Result"], shade.inputs[1])
     alpha = tree.nodes.new("ShaderNodeMath")
     alpha.operation = "MAXIMUM"
     tree.links.new(glass_alpha, alpha.inputs[0])
-    tree.links.new(mask.outputs["Result"], alpha.inputs[1])
+    tree.links.new(shade.outputs[0], alpha.inputs[1])
     tree.links.new(alpha.outputs[0], shader.inputs["Alpha"])
     tint = tree.nodes.new("ShaderNodeMixRGB")
     tint.inputs[1].default_value = shader.inputs["Base Color"].default_value
     tint.inputs[2].default_value = (.002, .002, .002, 1)
-    tree.links.new(mask.outputs["Result"], tint.inputs[0])
+    tree.links.new(shade.outputs[0], tint.inputs[0])
     tree.links.new(tint.outputs[0], shader.inputs["Base Color"])
+    specular = tree.nodes.new("ShaderNodeMath")
+    specular.operation = "MULTIPLY_ADD"
+    specular.inputs[1].default_value = -.44
+    specular.inputs[2].default_value = .50
+    tree.links.new(shade.outputs[0], specular.inputs[0])
+    tree.links.new(specular.outputs[0], shader.inputs["Specular IOR Level"])
+
+
+def seat_v1_parcel(parcel):
+    shell = next(obj for obj in parcel.instance_collection.objects
+                 if obj.name.startswith("Foil wrap | pinched and twisted ends"))
+    drop = .00215
+    shell.data = shell.data.copy()
+    floor = min(vertex.co.z for vertex in shell.data.vertices) + drop
+    # Broaden the underside as the parcel settles onto the glass.
+    for vertex in shell.data.vertices:
+        vertex.co.z = max(vertex.co.z, floor)
+    shell.data.update()
+    parcel.location.z -= drop
+
 
 def production_hero(m1, m5, door, cut_edges, plate, ring, rig, hero_camera, hot, seat):
     scene = new_scene("V1 | Interior turntable")
@@ -909,7 +940,9 @@ def production_hero(m1, m5, door, cut_edges, plate, ring, rig, hero_camera, hot,
         parcel_group.objects.link(obj)
         if obj.type == "MESH" and obj.active_material == bpy.data.materials["M2 silver foil | red-hot edges"]:
             obj.active_material = heat_material
-    instance("M2 heating parcel", turntable, parcel_group, (0, 0, seat)).parent = pivot
+    parcel = instance("M2 heating parcel", turntable, parcel_group, (0, 0, seat))
+    parcel.parent = pivot
+    seat_v1_parcel(parcel)
     for frame, heat in ((1, 0), (49, 0), (58, 0), (73, 3.2), (96, HOT_EDGE_STRENGTH)):
         socket = heat_material.node_tree.nodes["Heat intensity"].outputs[0]
         socket.default_value = heat
