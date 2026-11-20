@@ -9,7 +9,6 @@ from mathutils import Quaternion, Vector, noise
 
 ROOT = Path(__file__).resolve().parent
 HOT_EDGE_STRENGTH = 27.0
-bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
 def collection(name, parent=None):
@@ -451,6 +450,39 @@ def potato_radius(u):
     return .0298 * max(0, 1 - u*u)**.69 * (1 + .13*u + .045*sin(6*u + .7))
 
 
+def wrapped_potato(u, t, lift=0, smooth=False):
+    y0, z0 = .004*sin(2.4*u), .032 + .003*u + .001*cos(4*u)
+    cap = min(1.0, max(0, (abs(u)-.80)/.20))
+    edible = potato_radius(max(-1, min(1, 1.08*u)))
+    r = edible + .0040 + .0069*cap*cap
+    curl = t + 1.40*cap*cap*(1 if u < 0 else -1)
+    broad = .0015 * sin(4*curl + 5*u) + .0010 * cos(7*curl - 11*u)
+    crease = .00135 * (1 - abs(sin(11*curl + 19*u + 1.2*sin(8*u-2*t))))
+    wrinkle = .0010 * cos(21*t - 35*u) * sin(14*u+sin(6*t))
+    fine = .00058 * noise.noise_vector((u*33, cos(t)*9, sin(t)*9))[0]
+    if smooth:
+        r += .24*broad * (1-.40*cap)
+    else:
+        r += (broad + crease + wrinkle + fine) * (1-.40*cap)
+    r += cap*.0037*cos(6*curl + (2 if u < 0 else 0))
+    r = max(.001, r + lift)
+    x = .086*u + cap**4*(.0020*sin(5*curl)+.0014*cos(9*curl))
+    # The underside has a short flat footprint where the parcel rests.
+    return x, y0+r*cos(curl), max(-.0007, z0+.94*r*sin(curl))
+
+
+def tucked_foil_end(side, a, b, smooth=False):
+    # The twisted foil folds back over the potato tip inside each open lip.
+    angle = -side*tau*b
+    outer = wrapped_potato(side, angle, smooth=smooth)
+    center = (side*.0815, .004*sin(2.4*side), .032+.003*side+.001*cos(4*side))
+    radius = 1.003*a
+    x, y, z = (inner + radius*(edge-inner) for inner, edge in zip(center, outer))
+    folds = sin(pi*a) * (.0011*cos(6*angle) + .00065*cos(11*angle+side))
+    glints = max(0, cos(6*angle+side))**6
+    return (x + side*folds, y, z), .30*a**7*glints
+
+
 def smooth_foil_panel(model, source, rows, cols, smooth_surface, mat):
     """Preserve the wrapped outline while deriving reflections from a smoother surface."""
     panel = foil_grid(source.name + " | smooth", model, rows, cols,
@@ -538,26 +570,6 @@ def sweet_potato():
         points = [tuber(a + delta, b + .12*delta)[0] for delta in (-.008, -.003, .003, .008)]
         tube(f"Sweet potato | root trace {index+1}", normal, points, .00032, skin)
 
-    def wrapped(u, t, lift=0, smooth=False):
-        y0, z0 = .004*sin(2.4*u), .032 + .003*u + .001*cos(4*u)
-        cap = min(1.0, max(0, (abs(u)-.80)/.20))
-        edible = potato_radius(max(-1, min(1, 1.08*u)))
-        r = edible + .0040 + .0069*cap*cap
-        curl = t + 1.40*cap*cap*(1 if u < 0 else -1)
-        broad = .0015 * sin(4*curl + 5*u) + .0010 * cos(7*curl - 11*u)
-        crease = .00135 * (1 - abs(sin(11*curl + 19*u + 1.2*sin(8*u-2*t))))
-        wrinkle = .0010 * cos(21*t - 35*u) * sin(14*u+sin(6*t))
-        fine = .00058 * noise.noise_vector((u*33, cos(t)*9, sin(t)*9))[0]
-        if smooth:
-            r += .24*broad * (1-.40*cap)
-        else:
-            r += (broad + crease + wrinkle + fine) * (1-.40*cap)
-        r += cap*.0037*cos(6*curl + (2 if u < 0 else 0))
-        r = max(.001, r + lift)
-        x = .086*u + cap**4*(.0020*sin(5*curl)+.0014*cos(9*curl))
-        # The underside has a short flat footprint where the parcel rests.
-        return x, y0+r*cos(curl), max(-.0007, z0+.94*r*sin(curl))
-
     def wrap_surface(a, b):
         u, t = 2*a - 1, tau*b
         w = max(0, (abs(u)-.932)/.068)
@@ -566,25 +578,14 @@ def sweet_potato():
         patch = exp(-((t-2.04)/.34)**2) * (
             exp(-((u-.49)/.13)**2) + .68*exp(-((u+.32)/.18)**2)
         )
-        return wrapped(u, t), .74*w*w*flecks + .59*crest*crest*patch
+        return wrapped_potato(u, t), .74*w*w*flecks + .59*crest*crest*patch
 
     shell = foil_grid("Foil wrap | pinched and twisted ends", normal,
                       136, 112, wrap_surface, cold_foil, .00013, closed=True)
 
-    def tucked_end(side, a, b, smooth=False):
-        # The twisted foil folds back over the potato tip inside each open lip.
-        angle = -side*tau*b
-        outer = wrapped(side, angle, smooth=smooth)
-        center = (side*.0815, .004*sin(2.4*side), .032+.003*side+.001*cos(4*side))
-        radius = 1.003*a
-        x, y, z = (inner + radius*(edge-inner) for inner, edge in zip(center, outer))
-        folds = sin(pi*a) * (.0011*cos(6*angle) + .00065*cos(11*angle+side))
-        glints = max(0, cos(6*angle+side))**6
-        return (x + side*folds, y, z), .30*a**7*glints
-
     folded_ends = [
         foil_grid(f"Foil wrap | tucked {label} end", normal, 15, 112,
-                  lambda a, b, side=side: tucked_end(side, a, b),
+                  lambda a, b, side=side: tucked_foil_end(side, a, b),
                   cold_foil, .00013, closed=True)
         for label, side in [("left", -1), ("right", 1)]
     ]
@@ -598,7 +599,7 @@ def sweet_potato():
         gleam = .46 + .54*max(0, cos(u*9.2-.7)+.25*sin(u*28))**2
         edge = max(0, (b-.48)/.52)**1.12
         heat = edge * min(1.0, gleam) * (.86+.14*sin(u*52))
-        return wrapped(u, t, rise), heat
+        return wrapped_potato(u, t, rise), heat
 
     seam = foil_grid("Foil wrap | overlapping crimped seam", normal,
                      122, 12, overlap, cold_foil, .00013)
@@ -611,23 +612,30 @@ def sweet_potato():
             duplicate.material_slots[0].material = hot_foil
     model["food_mm"] = "150 × approximately 60"
     model["variant"] = "Switch between the unheated and red-hot subcollections"
+    return model, normal, hot
+
+
+def smooth_foil(normal):
     smooth = collection("M4_smooth_foil_food")
     smooth["finish"] = "M2 parcel outline with smooth aluminum and a closed foil overlap"
     for source in normal.objects:
-        if source not in (shell, seam, *folded_ends):
+        if source.name.startswith("Sweet potato |"):
             duplicate = source.copy()
+            duplicate.location -= normal.instance_offset
             smooth.objects.link(duplicate)
     flat_aluminum = foil_material("M4 smooth aluminum", (.26, .30), wrinkled=False)
     folded_aluminum = flat_aluminum.copy()
     folded_aluminum.name = "M4 smooth aluminum | laid-down overlap"
+    shell = normal.objects["Foil wrap | pinched and twisted ends"]
     flat_shell = smooth_foil_panel(
         smooth, shell, 136, 112,
-        lambda a, b: (wrapped(2*a-1, tau*b, smooth=True), 0), folded_aluminum)
+        lambda a, b: (wrapped_potato(2*a-1, tau*b, smooth=True), 0), folded_aluminum)
     smooth_foil_seam(flat_shell, 112, folded_aluminum)
-    for source, side in zip(folded_ends, (-1, 1)):
+    for label, side in (("left", -1), ("right", 1)):
+        source = normal.objects[f"Foil wrap | tucked {label} end"]
         smooth_foil_panel(smooth, source, 15, 112,
-                          lambda a, b: tucked_end(side, a, b, smooth=True), flat_aluminum)
-    return model, normal, hot, smooth
+                          lambda a, b: tucked_foil_end(side, a, b, smooth=True), flat_aluminum)
+    return smooth
 
 
 def crumpled_foil():
@@ -1051,10 +1059,12 @@ def production_foil(m3, m4, studio):
 
 
 def main():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
     initial = bpy.context.scene
     m1, door, skin, cut_edges, side_hardware, plate, ring = microwave()
-    m2, normal, hot, m4 = sweet_potato()
+    m2, normal, hot = sweet_potato()
     m3 = crumpled_foil()
+    m4 = smooth_foil(normal)
     m5 = kitchen()
 
     library = new_scene("05_model_library")
