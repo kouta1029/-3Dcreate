@@ -1,13 +1,14 @@
-"""Build the reusable D01 asset and Phase A review scenes in Blender 4.3.2."""
+"""Build the reusable D01 asset, review scenes and production shots in Blender 4.3.2."""
 
-from math import cos, exp, pi, sin, sqrt, tau
+from math import atan2, cos, exp, pi, sin, sqrt, tau
 from pathlib import Path
 import random
 
 import bpy
-from mathutils import Vector, noise
+from mathutils import Quaternion, Vector, noise
 
 ROOT = Path(__file__).resolve().parent
+HOT_EDGE_STRENGTH = 27.0
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
@@ -177,14 +178,14 @@ def microwave_materials():
     tint.color_ramp.elements[1].color = (.55, .435, .302, 1)
     mica.node_tree.links.new(tex.outputs["Fac"], tint.inputs["Fac"])
     mica.node_tree.links.new(tint.outputs["Color"], shader.inputs["Base Color"])
-    rubber, _ = material("Roller polymer", (.22, .21, .185), 0, .48)
+    rubber, _ = material("Roller polymer", (.049, .045, .041), 0, .57)
     bulb, shader = material("Warm opal lamp diffuser", (.65, .53, .38), 0, .33)
     shader.inputs["Emission Color"].default_value = (1, .64, .35, 1)
     shader.inputs["Emission Strength"].default_value = 2.1
-    glass = glass_material("Clear pressed turntable glass", (.131, .171, .180), .19, .64)
+    glass = glass_material("Clear pressed turntable glass", (.118, .141, .147), .15, .46)
     glass.surface_render_method = "BLENDED"
     glass.use_transparency_overlap = False
-    glass_rim = glass_material("Turntable thick glass lip", (.22, .29, .31), .32, .94)
+    glass_rim = glass_material("Polished turntable glass lip", (.17, .22, .235), .27, .78)
     door_glass = glass_material("Smoke-tinted door glass", (.042, .054, .065), .27, .86)
     return case, enamel, enamel_trim, bezel, seam, brushed, section, mica, rubber, bulb, glass, glass_rim, door_glass
 
@@ -255,6 +256,7 @@ def microwave():
     rotor = collection("Turntable assembly", model)
     skin = collection("Side panels | intact", model)
     section_only = collection("Cut edges | cutaway", model)
+    side_hardware = collection("Right wall and intact waveguide", model)
     case, enamel, lining, bezel, seam, metal, section, mica, rubber, bulb, glass, glass_rim, door_glass = microwave_materials()
     cx = -.059
     box("Upper cabinet skin", fixed, (0, .015, .285), (.480, .330, .010), case, .0048)
@@ -273,11 +275,11 @@ def microwave():
     perforated_left_wall(fixed, enamel, seam)
     for label, y1, y2, z1, z2, group in [
         ("side lining | removable", -.161, .079, .040, .250, skin),
-        ("rear strip", .157, .169, .040, .250, fixed),
-        ("upper strip", .079, .157, .187, .250, fixed),
-        ("lower strip", .079, .157, .040, .135, fixed),
-        ("front jamb of port", .079, .086, .135, .187, fixed),
-        ("rear jamb of port", .149, .157, .135, .187, fixed),
+        ("rear strip", .157, .169, .040, .250, side_hardware),
+        ("upper strip", .079, .157, .187, .250, side_hardware),
+        ("lower strip", .079, .157, .040, .135, side_hardware),
+        ("front jamb of port", .079, .086, .135, .187, side_hardware),
+        ("rear jamb of port", .149, .157, .135, .187, side_hardware),
     ]:
         box(f"Right enamel lining | {label}", group, (.097, (y1+y2)/2, (z1+z2)/2),
             (.002, y2-y1, z2-z1), enamel, .0006)
@@ -311,58 +313,54 @@ def microwave():
     box("Cavity lamp | opal diffuser", fixed, (-.182, -.089, .242), (.020, .037, .0035), bulb, .0017)
 
     # Right-side cover and duct stay aligned in both views.
-    cover = box("Mica cover | cavity face", fixed, (.094, .1175, .161),
+    cover = box("Mica cover | cavity face", side_hardware, (.094, .1175, .161),
                 (.003, .069, .056), mica, .002)
     cover["part"] = "Waveguide cover on the right cavity wall"
     for y in (.087, .148):
         for z in (.140, .182):
-            cylinder("Mica cover retainer", fixed, (.0919, y, z), .002, .0015, metal, "X", 24)
+            cylinder("Mica cover retainer", side_hardware, (.0919, y, z), .002, .0015, metal, "X", 24)
     for z in (.136, .186):
-        box("Waveguide | horizontal wall", fixed, (.130, .1175, z), (.064, .064, .0035), metal, .001)
-    box("Waveguide | rear wall", fixed, (.130, .149, .161), (.064, .0032, .048), metal, .001)
+        box("Waveguide | horizontal wall", side_hardware, (.130, .1175, z), (.064, .064, .0035), metal, .001)
+    box("Waveguide | rear wall", side_hardware, (.130, .149, .161), (.064, .0032, .048), metal, .001)
     box("Waveguide | removable front wall", skin, (.130, .086, .161), (.064, .0032, .048), metal, .001)
-    for z in (.136, .186):
-        box("Waveguide section | exposed edge", section_only, (.130, .085, z),
-            (.063, .0028, .0035), section, .0006)
-    box("Exposed enamel cut edge", section_only, (.0968, .079, .215), (.0032, .003, .058), section, .0003)
-    box("Exposed enamel cut edge", section_only, (.0968, .079, .087), (.0032, .003, .091), section, .0003)
     box("Chassis side cut rail", section_only, (.226, .012, .032), (.009, .325, .013), section, .0015)
-    box("Magnetron | mounting flange", fixed, (.159, .117, .147), (.009, .075, .079), metal, .002)
-    box("Magnetron | shielding body", fixed, (.183, .116, .147), (.045, .060, .061), bezel, .002)
+    box("Magnetron | mounting flange", side_hardware, (.159, .117, .147), (.009, .075, .079), metal, .002)
+    box("Magnetron | shielding body", side_hardware, (.183, .116, .147), (.045, .060, .061), bezel, .002)
     for i in range(7):
-        box(f"Magnetron | cooling fin {i+1}", fixed, (.186, .115, .122+i*.0078),
+        box(f"Magnetron | cooling fin {i+1}", side_hardware, (.186, .115, .122+i*.0078),
             (.049, .067, .0022), metal, .00065)
-    cylinder("Magnetron | coupling housing", fixed, (.156, .118, .161), .014, .013, lining, "X")
-    box("Power module | generic enclosure", fixed, (.181, .009, .056), (.067, .079, .034), case, .002)
+    cylinder("Magnetron | coupling housing", side_hardware, (.156, .118, .161), .014, .013, lining, "X")
+    box("Power module | generic enclosure", side_hardware, (.181, .009, .056), (.067, .079, .034), case, .002)
     for i in range(5):
-        box("Power module | lamination edge", fixed, (.180, -.015+i*.007, .074),
+        box("Power module | lamination edge", side_hardware, (.180, -.015+i*.007, .074),
             (.057, .0022, .003), metal, .0005)
 
     roller_ring = add_object("Roller ring carrier", None, rotor, (cx, .002, 0))
     roller_ring.empty_display_size = .016
     ring = lathe("Three-roller guide ring", rotor, (0, 0, 0),
-                 [(.091, .043), (.098, .043), (.098, .047), (.091, .047), (.091, .043)], rubber)
+                 [(.099, .0415), (.104, .0415), (.104, .0447), (.099, .0447), (.099, .0415)], rubber)
     ring.parent = roller_ring
     for i in range(3):
         a = i*tau/3 + .24
         roller = cylinder(f"Turntable support roller {i+1}", rotor,
-                          (.0945*cos(a), .0945*sin(a), .048), .0075, .010, rubber, "X", 32)
+                          (.102*cos(a), .102*sin(a), .04375), .00375, .007, rubber, "X", 32)
         roller.rotation_euler.z = a
         roller.parent = roller_ring
-    cylinder("Drive coupler", fixed, (cx, .002, .048), .017, .015, seam, count=48)
-    plate = add_object("Turntable pivot | Ø270 mm", None, rotor, (cx, .002, .058))
+    cylinder("Recessed drive coupler", fixed, (cx, .002, .0377), .007, .004, seam, count=48)
+    plate = add_object("Turntable pivot | Ø270 mm", None, rotor, (cx, .002, .0508))
     plate.empty_display_size = .018
     disc = lathe("Pressed glass dish", rotor, (0, 0, 0),
-                 [(0, -.0032), (.095, -.0032), (.112, -.004), (.127, -.0033),
-                  (.133, -.0008), (.135, .0014), (.134, .0033), (.130, .0039),
-                  (.122, .0005), (.108, 0), (0, 0)], glass, 160)
+                 [(0, -.0033), (.105, -.0033), (.121, -.0030), (.130, -.0025),
+                  (.134, -.0017), (.135, -.0005), (.1345, .0007), (.132, .0016),
+                  (.128, .00165), (.121, .0004), (.111, 0), (0, 0)], glass, 160)
     disc.parent = plate
-    rim_profile = [(.129, -.0011), (.133, -.0015), (.135, .0008), (.135, .0022),
-                   (.133, .0038), (.130, .0039), (.129, .0023), (.129, -.0011)]
+    # The glass has a downward drive socket that mates with the mostly recessed coupler.
+    lathe("Molded glass drive socket", rotor, (0, 0, 0),
+          [(.0045, -.0111), (.0083, -.0111), (.0108, -.0062),
+           (.013, -.0033), (.006, -.0033), (.0045, -.0111)], glass, 48).parent = plate
+    rim_profile = [(.132, -.0021), (.134, -.0017), (.135, -.0005), (.1345, .0007),
+                   (.132, .0016), (.129, .00166), (.132, .0003), (.132, -.0021)]
     lathe("Polished glass lip", rotor, (0, 0, 0), rim_profile, glass_rim, 160).parent = plate
-    lathe("Molded underside ridge", rotor, (0, 0, 0),
-          [(.105, -.004), (.107, -.004), (.108, -.003), (.106, -.0028), (.105, -.004)],
-          glass_rim, 128).parent = plate
 
     hinge = add_object("Door hinge | adjust Open Degrees", None, door, (-.225, -.164, .144))
     hinge.empty_display_size = .024
@@ -398,7 +396,7 @@ def microwave():
     model["outer_mm"] = "480 × 360 × 290"
     model["cavity_mm"] = "310 × 330 × 210"
     model["turntable_mm"] = 270
-    return model, door, skin, section_only, plate, roller_ring
+    return model, door, skin, section_only, side_hardware, plate, roller_ring
 
 
 def foil_material(name, roughness, heat=0.0, wrinkled=True):
@@ -409,14 +407,14 @@ def foil_material(name, roughness, heat=0.0, wrinkled=True):
         mask = tree.nodes.new("ShaderNodeAttribute")
         mask.attribute_name = "hot_edges"
         intensity = tree.nodes.new("ShaderNodeValue")
-        intensity.label = "Heat intensity"
+        intensity.name = intensity.label = "Heat intensity"
         intensity.outputs[0].default_value = heat
         multiply = tree.nodes.new("ShaderNodeMath")
         multiply.operation = "MULTIPLY"
         tree.links.new(mask.outputs["Fac"], multiply.inputs[0])
         tree.links.new(intensity.outputs[0], multiply.inputs[1])
         tree.links.new(multiply.outputs[0], shader.inputs["Emission Strength"])
-        shader.inputs["Emission Color"].default_value = (1, .027, .0025, 1)
+        shader.inputs["Emission Color"].default_value = (1, .050, .002, 1)
     return mat
 
 
@@ -458,7 +456,7 @@ def sweet_potato():
     normal = collection("M2 | unheated wrap", model)
     hot = collection("M2 | red-hot wrap", model)
     cold_foil = foil_material("M2 silver foil", (.20, .34))
-    hot_foil = foil_material("M2 silver foil | red-hot edges", (.20, .34), heat=8.5)
+    hot_foil = foil_material("M2 silver foil | red-hot edges", (.20, .34), heat=HOT_EDGE_STRENGTH)
     skin, shader = material("Sweet potato | red-purple peel", (.26, .047, .063), 0, .51)
     tex = grain(skin, shader, 420, .00042, (.45, .61))
     gradient = skin.node_tree.nodes.new("ShaderNodeValToRGB")
@@ -497,17 +495,18 @@ def sweet_potato():
         r += cap*.0037*cos(6*curl + (2 if u < 0 else 0))
         r = max(.001, r + lift)
         x = .086*u + cap**4*(.0020*sin(5*curl)+.0014*cos(9*curl))
-        return x, y0+r*cos(curl), z0+.94*r*sin(curl)
+        # The underside has a short flat footprint where the parcel rests.
+        return x, y0+r*cos(curl), max(-.0007, z0+.94*r*sin(curl))
 
     def wrap_surface(a, b):
         u, t = 2*a - 1, tau*b
-        w = max(0, (abs(u)-.946)/.054)
-        flecks = max(0, sin(9*t+11*u))**3 * (.52+.48*cos(3*t-10*u))**2
-        crest = max(0, 1-5*abs(sin(11*t+19*u+1.2*sin(8*u-2*t))))
+        w = max(0, (abs(u)-.932)/.068)
+        flecks = .10 + .90*max(0, sin(7*t+11*u))**2 * (.65+.35*cos(3*t-10*u))
+        crest = max(0, 1-2.6*abs(sin(11*t+19*u+1.2*sin(8*u-2*t))))
         patch = exp(-((t-2.04)/.34)**2) * (
             exp(-((u-.49)/.13)**2) + .68*exp(-((u+.32)/.18)**2)
         )
-        return wrapped(u, t), .67*w*w*flecks + .44*crest*crest*patch
+        return wrapped(u, t), .74*w*w*flecks + .59*crest*crest*patch
 
     shell = foil_grid("Foil wrap | pinched and twisted ends", normal,
                       136, 112, wrap_surface, cold_foil, .00013, closed=True)
@@ -536,8 +535,8 @@ def sweet_potato():
         width = .25+.052*sin(12*u+.5)+.026*sin(29*u)
         t = center + width*b
         rise = .00027 + b*b*(.00058+.00021*sin(19*u))*(.78+.22*cos(40*u))
-        gleam = .18 + .82*max(0, cos(u*9.2-.7)+.25*sin(u*28))**2
-        edge = max(0, (b-.60)/.40)**1.35
+        gleam = .46 + .54*max(0, cos(u*9.2-.7)+.25*sin(u*28))**2
+        edge = max(0, (b-.48)/.52)**1.12
         heat = edge * min(1.0, gleam) * (.86+.14*sin(u*52))
         return wrapped(u, t, rise), heat
 
@@ -719,16 +718,17 @@ def instance(name, group, model, location):
 def dish_contact_shadow(group, plate):
     # A soft grounding shadow on the transparent plate, rotating with the parcel.
     mat, shader = material("Parcel contact shade", (.004, .004, .004), 0, .8)
-    mat.surface_render_method = "BLENDED"
+    mat.surface_render_method = "DITHERED"
     attribute = mat.node_tree.nodes.new("ShaderNodeAttribute")
     attribute.attribute_name = "opacity"
     mat.node_tree.links.new(attribute.outputs["Fac"], shader.inputs["Alpha"])
-    rings = [(1, 0), (.88, .035), (.70, .10), (.49, .24), (.30, .44), (0, .49)]
-    shadow = lathe("Parcel | soft contact shadow", group, (.008, 0, .00024),
+    rings = [(1, 0), (.82, .085), (.66, .26), (.50, .56), (.30, .76), (0, .82)]
+    shadow = lathe("Parcel | soft contact shadow", group, (.004, -.018, .00035),
                    [(radius, 0) for radius, _ in rings], mat, 48)
-    shadow.scale = (.073, .033, 1)
+    shadow.scale = (.067, .046, 1)
     shadow.parent = plate
     custom_float(shadow, "opacity", [opacity for _, opacity in rings for _ in range(48)])
+    return shadow
 
 
 def measured_bounds(objects):
@@ -758,9 +758,250 @@ def place_in_library(group, variants, position):
         variant.instance_offset = delta
 
 
+def animate_turntable(plate, ring, end_frame):
+    for pivot, turn in ((plate, tau), (ring, tau/3)):
+        for frame, angle in ((1, 0), (end_frame, turn)):
+            pivot.rotation_euler.z = angle
+            pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=frame)
+        for curve in pivot.animation_data.action.fcurves:
+            for key in curve.keyframe_points:
+                key.interpolation = "LINEAR"
+            curve.modifiers.new("CYCLES")
+
+
+def copy_assembly(source_objects, destination):
+    copies = {}
+    for source in source_objects:
+        obj = source.copy()
+        obj.animation_data_clear()
+        destination.objects.link(obj)
+        copies[source] = obj
+    for source, obj in copies.items():
+        obj.parent = copies.get(source.parent, source.parent)
+    return copies
+
+
+def animate_glass_contact(dish):
+    """Put a soft rotating contact shadow directly in the transparent dish surface."""
+    slot = dish.material_slots[0]
+    mat = slot.material.copy()
+    mat.name = "Turntable glass | rotating contact shadow"
+    slot.link = "OBJECT"
+    slot.material = mat
+    tree = mat.node_tree
+    shader = tree.nodes.get("Principled BSDF")
+    glass_alpha = shader.inputs["Alpha"].links[0].from_socket
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    offset = tree.nodes.new("ShaderNodeVectorMath")
+    offset.operation = "SUBTRACT"
+    offset.inputs[1].default_value = (.005, -.010, 0)
+    tree.links.new(coord.outputs["Object"], offset.inputs[0])
+    size = tree.nodes.new("ShaderNodeVectorMath")
+    size.operation = "MULTIPLY"
+    size.inputs[1].default_value = (1/.068, 1/.052, 0)
+    tree.links.new(offset.outputs["Vector"], size.inputs[0])
+    radius = tree.nodes.new("ShaderNodeVectorMath")
+    radius.operation = "LENGTH"
+    tree.links.new(size.outputs["Vector"], radius.inputs[0])
+    mask = tree.nodes.new("ShaderNodeMapRange")
+    mask.interpolation_type = "SMOOTHERSTEP"
+    mask.inputs["From Min"].default_value = .12
+    mask.inputs["To Min"].default_value = .78
+    mask.inputs["To Max"].default_value = 0
+    tree.links.new(radius.outputs["Value"], mask.inputs["Value"])
+    alpha = tree.nodes.new("ShaderNodeMath")
+    alpha.operation = "MAXIMUM"
+    tree.links.new(glass_alpha, alpha.inputs[0])
+    tree.links.new(mask.outputs["Result"], alpha.inputs[1])
+    tree.links.new(alpha.outputs[0], shader.inputs["Alpha"])
+    tint = tree.nodes.new("ShaderNodeMixRGB")
+    tint.inputs[1].default_value = shader.inputs["Base Color"].default_value
+    tint.inputs[2].default_value = (.002, .002, .002, 1)
+    tree.links.new(mask.outputs["Result"], tint.inputs[0])
+    tree.links.new(tint.outputs[0], shader.inputs["Base Color"])
+
+def production_hero(m1, m5, door, cut_edges, plate, ring, rig, hero_camera, hot, seat):
+    scene = new_scene("V1 | Interior turntable")
+    scene.frame_start, scene.frame_end = 1, 96
+    scene.camera = hero_camera
+    for group in (m1, m5, rig):
+        scene.collection.children.link(group)
+    rotor = plate.users_collection[0]
+    for group in (door, rotor, cut_edges):
+        exclude(scene, group)
+    # Keep the model library's adjustable door closed by default.
+    open_door = collection("Open door | V1", scene.collection)
+    opened = copy_assembly(door.objects, open_door)
+    hinge = next(obj for obj in opened.values() if obj.type == "EMPTY")
+    hinge["Open Degrees"] = 105.0
+    hinge.rotation_euler.z = -105*pi/180
+
+    turntable = collection("Turntable and animated foil | V1", scene.collection)
+    rotating = copy_assembly(rotor.objects, turntable)
+    pivot = rotating[plate]
+    animate_glass_contact(rotating[bpy.data.objects["Pressed glass dish"]])
+    animate_turntable(pivot, rotating[ring], scene.frame_end)
+    heat_material = bpy.data.materials["M2 silver foil | red-hot edges"].copy()
+    heat_material.name = "M2 silver foil | V1 animated heat"
+    parcel_group = collection("M2 | V1 animated wrap")
+    parcel_group.instance_offset = hot.instance_offset
+    for source in hot.objects:
+        obj = source.copy()
+        parcel_group.objects.link(obj)
+        if obj.type == "MESH" and obj.active_material == bpy.data.materials["M2 silver foil | red-hot edges"]:
+            obj.active_material = heat_material
+    instance("M2 heating parcel", turntable, parcel_group, (0, 0, seat)).parent = pivot
+    for frame, heat in ((1, 0), (49, 0), (58, 0), (73, 3.2), (96, HOT_EDGE_STRENGTH)):
+        socket = heat_material.node_tree.nodes["Heat intensity"].outputs[0]
+        socket.default_value = heat
+        socket.keyframe_insert(data_path="default_value", frame=frame)
+    return scene
+
+
+def side_profile(name, group, outline, x_back, x_front, material):
+    """Extrude a clockwise profile drawn in the microwave's YZ section plane."""
+    outline = list(reversed(outline))
+    vertices = [(x, y, z) for x in (x_back, x_front) for y, z in outline]
+    count = len(outline)
+    faces = [tuple(range(count-1, -1, -1)), tuple(range(count, 2*count))]
+    faces += [(i, (i+1)%count, (i+1)%count+count, i+count) for i in range(count)]
+    obj = mesh_object(name, group, vertices, faces, material)
+    bevel(obj, .00065, 2)
+    return obj
+
+
+def section_model(group):
+    metal = bpy.data.materials["Satin aluminum"]
+    edge = bpy.data.materials["Uncoated cut edges"]
+    gasket = bpy.data.materials["Gaskets and recesses"]
+    mica = bpy.data.materials["Warm mica waveguide cover"]
+    lining = bpy.data.materials["Formed enamel details"]
+    # Open longitudinal section of a folded, rectangular guide in the service bay.
+    lower = [(.050, .152), (.050, .206), (.071, .232), (.120, .232)]
+    upper = [(.074, .152), (.074, .196), (.083, .207), (.120, .207)]
+    side_profile("Waveguide | recessed inner wall", group, lower + list(reversed(upper)),
+                 .125, .127, lining)
+    for index, boundary in enumerate((lower, upper), 1):
+        for j, ((y1, z1), (y2, z2)) in enumerate(zip(boundary, boundary[1:]), 1):
+            size = sqrt((y2-y1)**2 + (z2-z1)**2)
+            rail = box(f"Waveguide | section wall {index}.{j}", group,
+                       (.150, (y1+y2)/2, (z1+z2)/2), (.046, size+.002, .0030), metal, .00065)
+            rail.rotation_euler.x = atan2(z2-z1, y2-y1)
+    # Longitudinal view of the outlet where the guide turns through the cavity wall.
+    box("Waveguide outlet | machined collar", group, (.128, .062, .150),
+        (.070, .035, .009), edge, .0011)
+    box("Waveguide outlet | opening", group, (.098, .062, .145),
+        (.005, .027, .006), gasket, .0008)
+    box("Mica cover | sectioned cavity-side edge", group, (.094, .062, .141),
+        (.0025, .038, .0038), mica, .0007)
+    for y in (.044, .080):
+        box("Cavity lining | edge of outlet cut", group, (.097, y, .143),
+            (.003, .0024, .020), lining, .0005)
+    box("Magnetron | mounting flange in section", group, (.157, .120, .219),
+        (.056, .006, .042), edge, .0011)
+    box("Magnetron | RF coupler", group, (.151, .114, .219),
+        (.018, .018, .022), metal, .0011)
+    box("Magnetron | shielding body in section", group, (.163, .140, .220),
+        (.042, .032, .042), gasket, .0015)
+    for index in range(7):
+        box(f"Magnetron | exposed fin {index+1}", group, (.166, .140, .202+.0058*index),
+            (.052, .036, .00165), metal, .00035)
+    box("Magnetron | terminal insulator", group, (.161, .143, .193),
+        (.024, .015, .009), mica, .0011)
+    box("Rear cut flange", group, (.211, .172, .148),
+        (.011, .006, .238), edge, .0015)
+
+
+def production_section(m1, m5, door, skin, side_hardware, plate, normal):
+    scene = new_scene("03_cutaway_side")
+    scene.collection.children.link(m1)
+    scene.collection.children.link(m5)
+    for group in (door, skin, side_hardware):
+        exclude(scene, group)
+    rig = collection("Longitudinal cutaway | section and lighting", scene.collection)
+    camera_obj = camera(scene, rig, "Cutaway | right orthographic", (.78, .075, .144),
+                        (0, .075, .144), 32)
+    camera_obj.data.type = "ORTHO"
+    camera_obj.data.ortho_scale = .368
+    section_model(rig)
+    parcel = instance("M2 in the sectioned cavity", rig, normal, (plate.location.x, .050, plate.location.z))
+    parcel.rotation_euler.z = .81
+    contact = dish_contact_shadow(rig, parcel)
+    area(rig, "Section | broad face key", (.52, -.045, .43), (-.02, .055, .142),
+         4.8, (.95, .97, 1), .39, .29)
+    area(rig, "Section | grazing rear strip", (.32, .265, .34), (.09, .093, .170),
+         2.5, (1, .95, .87), .16, .20)
+    area(rig, "Section | lower frontal fill", (.36, -.19, .13), (.02, .07, .107),
+         1.55, (.90, .935, 1), .17, .25)
+    area(rig, "Section | cavity highlight", (-.083, .137, .206), (-.05, .050, .067),
+         .50, (.94, .965, 1), .11, .034)
+    return scene, parcel, contact
+
+def rolled_camera_pose(obj, location, target, roll):
+    obj.location = location
+    aim(obj, target)
+    rotation = obj.rotation_euler.to_quaternion() @ Quaternion((0, 0, 1), -roll)
+    obj.rotation_mode = "QUATERNION"
+    obj.rotation_quaternion = rotation
+
+
+def production_foil(m3, m4, studio):
+    macro = new_scene("V3 | Macro approach")
+    macro.frame_start, macro.frame_end = 1, 72
+    macro.collection.children.link(studio)
+    instance("M3 | full macro sheet", macro.collection, m3, (0, 0, 0))
+    rig = collection("Camera move | V3", macro.collection)
+    start_location = Vector((.0278, -.4638, .2885))
+    start_target = Vector((-.010, -.0011, .003))
+    start_focus = Vector((.006, .008, .023))
+    view = camera(macro, rig, "V3 | foil to raised tip", start_location, start_target,
+                  54, start_focus, aperture=15)
+    peak_mesh = next(iter(m3.objects)).data
+    tip = max(peak_mesh.vertices, key=lambda vertex: vertex.co.z).co.copy()
+    end_location = tip + Vector((.046, -.115, .045))
+    for frame in (1, 13, 25, 37, 49, 61, 72):
+        t = (frame-1)/71
+        travel = t*t*(3-2*t)
+        location = start_location.lerp(end_location, travel)
+        target = start_target.lerp(tip, travel)
+        focus = start_focus.lerp(tip, travel)
+        rolled_camera_pose(view, location, target, 1.20-.73*travel)
+        direction = (location - target).normalized()
+        view.data.dof.focus_distance = (location - focus).dot(direction)
+        view.keyframe_insert(data_path="location", frame=frame)
+        view.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+        view.data.keyframe_insert(data_path="dof.focus_distance", frame=frame)
+
+    comparison = collection("Shared comparison camera | V4")
+    target = (-.014, .0073, -.0066)
+    location = (.0478, -.4168, .184)
+    scenes = [macro]
+    for scene_name, model, position in (
+        ("V4 | Flat foil", m4, (-.0007, -.0835, -.0068)),
+        ("V4 | Crumpled foil", m3, (0, 0, 0)),
+    ):
+        scene = new_scene(scene_name)
+        scene.collection.children.link(studio)
+        scene.collection.children.link(comparison)
+        subject = instance(model.name, scene.collection, model, position)
+        if model == m4:
+            subject.rotation_euler.z = .281
+            subject.scale = (1.264,) * 3
+        if not comparison.objects:
+            shared_view = camera(scene, comparison, "V4 | shared camera", location, target, 51)
+            rolled_camera_pose(shared_view, location, target, 1.13)
+            shared_view.data.shift_x = .018
+        scene.camera = shared_view
+        scenes.append(scene)
+
+    for scene in scenes:
+        scene.world.node_tree.nodes.get("Background").inputs["Strength"].default_value = .16
+    return scenes
+
+
 def main():
     initial = bpy.context.scene
-    m1, door, skin, cut_edges, plate, ring = microwave()
+    m1, door, skin, cut_edges, side_hardware, plate, ring = microwave()
     m2, normal, hot = sweet_potato()
     m3 = crumpled_foil()
     m4 = smooth_foil()
@@ -793,8 +1034,8 @@ def main():
     exclude(hero, door)
     exclude(hero, cut_edges)
     rig = collection("Interior camera and lights", hero.collection)
-    camera(hero, rig, "Hero | cavity three-quarter", (-.182, -.600, .257),
-           (-.058, -.006, .128), 25.7)
+    camera(hero, rig, "Hero | open cavity", (-.125, -.324, .192),
+           (-.061, .015, .135), 24)
     camera(hero, rig, "Interior | axial", (-.059, -.536, .168), (-.059, .030, .125), 28)
     area(rig, "Interior | broad front softbox", (-.18, -.295, .249), (-.059, .06, .070),
          2.2, (.91, .94, 1), .210, .145)
@@ -806,47 +1047,37 @@ def main():
          .68, (.87, .92, 1), .148, .048)
     area(rig, "Set | exterior soft fill", (-.44, -.47, .56), (-.07, 0, .17),
          2.1, (.95, .96, 1), .40, .32)
+    for obj in rig.objects:
+        if obj.type == "LIGHT":
+            obj.data.use_shadow = obj.name == "Interior | broad front softbox"
+    hero.eevee.use_shadows = True
+    hero.eevee.shadow_pool_size = "256"
+    hero.eevee.shadow_step_count = 2
     hero_foil = collection("Unheated parcel on the plate", hero.collection)
     parcel = instance("M2 parcel on turntable", hero_foil, normal, (0, 0, 0))
     parcel.parent = plate
-    dish_contact_shadow(rig, plate)
-    for pivot, turn in ((plate, tau), (ring, tau/3)):
-        for frame, angle in [(1, 0), (49, turn)]:
-            pivot.rotation_euler.z = angle
-            pivot.keyframe_insert(data_path="rotation_euler", index=2, frame=frame)
-        for curve in pivot.animation_data.action.fcurves:
-            for key in curve.keyframe_points:
-                key.interpolation = "LINEAR"
-            curve.modifiers.new("CYCLES")
+    shadow_group = collection("Phase A contact shadow", hero.collection)
+    dish_contact_shadow(shadow_group, plate)
+    animate_turntable(plate, ring, 49)
 
     hot_scene = new_scene("02_hero_interior_hot")
-    for group in (m1, m5, rig):
+    for group in (m1, m5, rig, shadow_group):
         hot_scene.collection.children.link(group)
     hot_scene.camera = hero.camera
+    hot_scene.eevee.use_shadows = True
+    hot_scene.eevee.shadow_pool_size = "256"
+    hot_scene.eevee.shadow_step_count = 2
     exclude(hot_scene, door)
     exclude(hot_scene, cut_edges)
     hot_foil = collection("Red-hot parcel on the plate", hot_scene.collection)
     instance("M2 red-hot parcel on turntable", hot_foil, hot, (0, 0, 0)).parent = plate
 
-    section = new_scene("03_cutaway_side")
-    section.collection.children.link(m1)
-    section.collection.children.link(m5)
-    exclude(section, door)
-    exclude(section, skin)
-    cut_rig = collection("Cutaway camera and lights", section.collection)
-    camera(section, cut_rig, "Cutaway | right side three-quarter", (.825, -.533, .398),
-           (.005, .009, .139), 29)
-    area(cut_rig, "Cutaway | top front key", (-.26, -.48, .58), (.01, .025, .122),
-         4.9, (.94, .965, 1), .44, .32)
-    area(cut_rig, "Cutaway | right rectangular softbox", (.47, -.09, .38), (.04, .07, .115),
-         5.4, (1, .95, .88), .27, .39)
-    area(cut_rig, "Cutaway | low cavity fill", (.05, -.25, .169), (-.10, .10, .113),
-         .88, (.90, .94, 1), .16, .13)
-    area(cut_rig, "Cutaway | right rear rim", (.37, .237, .36), (.12, .116, .15),
-         1.6, (.91, .94, 1), .17, .27)
+    section, section_parcel, section_contact = production_section(
+        m1, m5, door, skin, side_hardware, plate, normal)
 
     macro = new_scene("04_foil_macro")
-    macro_rig = collection("Foil studio and cameras", macro.collection)
+    macro_rig = collection("Foil studio | seamless stage and lights", macro.collection)
+    macro_cameras = collection("Phase A macro cameras", macro.collection)
     instance("M3 | macro sheet", macro.collection, m3, (0, 0, 0))
     macro.world.node_tree.nodes.get("Background").inputs["Strength"].default_value = .16
     substrate, shader = material("Macro stage | soot gray", (.027, .028, .029), 0, .69)
@@ -857,9 +1088,9 @@ def main():
     vertices = [(x, y, z) for y, z in sweep for x in (-1.4, 1.4)]
     faces = [(2*i, 2*i+1, 2*i+3, 2*i+2) for i in range(len(sweep)-1)]
     mesh_object("Macro stage | curved seamless backdrop", macro_rig, vertices, faces, substrate, True)
-    camera(macro, macro_rig, "Macro | pointed far fold", (.167, -.277, .134),
+    camera(macro, macro_cameras, "Macro | pointed far fold", (.167, -.277, .134),
            (.058, .031, .055), 57, (.054, .062, .087), aperture=13)
-    camera(macro, macro_rig, "Macro | overhead alternate", (-.012, -.002, .38),
+    camera(macro, macro_cameras, "Macro | overhead alternate", (-.012, -.002, .38),
            (.003, .014, .012), 26)
     area(macro_rig, "Foil | long white key", (-.17, -.115, .24), (.004, .035, .028),
          1.23, (.95, .97, 1), .20, .075)
@@ -870,7 +1101,8 @@ def main():
     area(macro_rig, "Foil | frontal fill", (.033, -.21, .094), (.022, .021, .028),
          .22, (.94, .97, 1), .106, .106)
 
-    for scene in (hero, hot_scene, section, macro, library):
+    foil_shots = production_foil(m3, m4, macro_rig)
+    for scene in (hero, hot_scene, section, macro, library, *foil_shots):
         scene.frame_set(1)
         scene.render.filepath = "//../renders/d01/"
     bpy.context.window.scene = library
@@ -880,8 +1112,14 @@ def main():
         print(f"D01 BOUNDS {model.name} m: " + " × ".join(f"{b-a:.5f}" for a, b in zip(lo, hi)))
     lo, hi = measured_bounds(normal.objects)
     # Seat the lowest wrinkle on the dish in both views.
-    parcel.location.z = hot_foil.objects[0].location.z = -lo[2] + .00009
-    bpy.context.window.scene = hero
+    seat = -lo[2] - .00002
+    parcel.location.z = hot_foil.objects[0].location.z = seat
+    section_parcel.location.z += seat
+    section_contact.location.z -= seat
+    v1 = production_hero(m1, m5, door, cut_edges, plate, ring, rig, hero.camera, hot, seat)
+    v1.frame_set(1)
+    v1.render.filepath = "//../renders/d01/"
+    bpy.context.window.scene = v1
     for screen in bpy.data.screens:
         for editor in screen.areas:
             if editor.type == "VIEW_3D":
